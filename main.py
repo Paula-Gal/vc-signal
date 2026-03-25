@@ -13,6 +13,8 @@ Usage:
     python main.py --dry-run                # Fetch only, no scoring
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -30,7 +32,7 @@ from rich.panel import Panel
 from src.models import InvestmentThesis, Signal
 from src.sources import HackerNewsSource, ProductHuntSource, GitHubTrendingSource, RSSFeedSource
 from src.scoring import ThesisScorer
-from src.output import MarkdownReportGenerator, SlackNotifier
+from src.output import MarkdownReportGenerator, EmailNotifier
 
 load_dotenv()
 console = Console()
@@ -132,11 +134,11 @@ def print_summary_table(scored_signals, threshold: float):
 @click.option("--thesis", default=None, help="Path to thesis YAML file")
 @click.option("--config", "config_path", default="config.yaml", help="Path to config file")
 @click.option("--threshold", default=None, type=float, help="Relevance score threshold (0-10)")
-@click.option("--slack", is_flag=True, help="Also send digest to Slack")
+@click.option("--email", is_flag=True, help="Also send digest by email")
 @click.option("--dry-run", is_flag=True, help="Fetch signals only, skip scoring")
 @click.option("--output", "output_path", default=None, help="Custom output file path")
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
-def main(thesis, config_path, threshold, slack, dry_run, output_path, verbose):
+def main(thesis, config_path, threshold, email, dry_run, output_path, verbose):
     """vc-signal-scanner — Find startup signals that match your thesis."""
 
     # Setup logging
@@ -173,7 +175,7 @@ def main(thesis, config_path, threshold, slack, dry_run, output_path, verbose):
         config=config,
         thesis=investment_thesis,
         threshold=threshold,
-        send_slack=slack,
+        send_email=email,
         dry_run=dry_run,
         output_path=output_path,
     ))
@@ -183,7 +185,7 @@ async def _run_pipeline(
     config: dict,
     thesis: InvestmentThesis,
     threshold: float,
-    send_slack: bool,
+    send_email: bool,
     dry_run: bool,
     output_path: str | None,
 ):
@@ -244,11 +246,29 @@ async def _run_pipeline(
     reporter.save(report, output_path)
     console.print(f"\n[green]Report saved to {output_path}[/green]")
 
-    # 5. Slack notification (optional)
-    if send_slack:
-        webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-        notifier = SlackNotifier(webhook_url)
-        await notifier.send_digest(scored_signals, threshold)
+    # 5. Email digest (optional)
+    if send_email:
+        missing = [v for v in ("EMAIL_SMTP_HOST", "EMAIL_USER", "EMAIL_PASSWORD", "EMAIL_FROM", "EMAIL_TO") if not os.getenv(v)]
+        if missing:
+            console.print(f"[red]Email not configured. Missing .env vars: {', '.join(missing)}[/red]")
+        else:
+            to_addrs = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+            email_config = config.get("output", {}).get("email", {})
+            notifier = EmailNotifier(
+                smtp_host=os.getenv("EMAIL_SMTP_HOST"),
+                smtp_port=int(os.getenv("EMAIL_SMTP_PORT", "587")),
+                user=os.getenv("EMAIL_USER"),
+                password=os.getenv("EMAIL_PASSWORD"),
+                from_addr=os.getenv("EMAIL_FROM"),
+                to_addrs=to_addrs,
+                fund_name=thesis.fund_name,
+            )
+            notifier.send_digest(
+                scored_signals,
+                threshold=threshold,
+                max_items=email_config.get("max_items", 15),
+            )
+            console.print(f"[green]Email digest sent to {', '.join(to_addrs)}[/green]")
 
 
 if __name__ == "__main__":

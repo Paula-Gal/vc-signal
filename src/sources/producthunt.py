@@ -5,6 +5,8 @@ Great for catching new B2B tools, developer products, and AI launches
 that may represent early-stage startups gaining traction.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timedelta
 

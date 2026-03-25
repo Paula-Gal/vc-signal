@@ -5,6 +5,8 @@ Configurable list of feeds — defaults include EU-focused sources
 that are underrepresented in US-centric tools.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 

@@ -58,6 +58,5 @@ output:
     output_dir: "output/"
     max_items: 15          # Max signals in the digest
 
-  slack:
-    enabled: false         # Set to true and add SLACK_WEBHOOK_URL to .env
-    max_items: 10
+  email:
+    max_items: 15

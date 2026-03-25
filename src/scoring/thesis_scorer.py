@@ -5,6 +5,8 @@ It takes raw signals and evaluates them against a fund's investment thesis
 using Claude, returning structured relevance scores and reasoning.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import asyncio

@@ -5,6 +5,8 @@ Useful for catching new product launches, technical discussions,
 and startup announcements before they hit mainstream press.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime

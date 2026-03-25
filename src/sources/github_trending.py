@@ -5,6 +5,8 @@ developer tools, AI frameworks, and open-source projects
 that may signal a startup gaining technical traction.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 
