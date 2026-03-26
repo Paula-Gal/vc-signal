@@ -1,9 +1,4 @@
-"""GitHub Trending data source.
-
-Monitors GitHub trending repositories — useful for catching
-developer tools, AI frameworks, and open-source projects
-that may signal a startup gaining technical traction.
-"""
+"""GitHub Trending data source — catches developer tools and open-source traction signals."""
 
 from __future__ import annotations
 
@@ -32,20 +27,15 @@ class GitHubTrendingSource:
         signals = []
         urls_to_fetch = [GITHUB_TRENDING_URL]
 
-        # Also fetch language-specific trending if configured
         for lang in self.languages:
             urls_to_fetch.append(f"{GITHUB_TRENDING_URL}/{lang}?since=daily")
 
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             for url in urls_to_fetch:
                 try:
-                    resp = await client.get(
-                        url,
-                        headers={"User-Agent": "vc-signal-scanner/1.0"},
-                    )
+                    resp = await client.get(url, headers={"User-Agent": "vc-signal-scanner/1.0"})
                     resp.raise_for_status()
-                    page_signals = self._parse_trending_page(resp.text)
-                    signals.extend(page_signals)
+                    signals.extend(self._parse_trending_page(resp.text))
                 except httpx.HTTPError as e:
                     logger.warning(f"GitHub trending fetch failed for {url}: {e}")
 
@@ -65,10 +55,8 @@ class GitHubTrendingSource:
         signals = []
         soup = BeautifulSoup(html, "html.parser")
 
-        articles = soup.select("article.Box-row")
-        for article in articles:
+        for article in soup.select("article.Box-row"):
             try:
-                # Repository name and URL
                 name_el = article.select_one("h2 a")
                 if not name_el:
                     continue
@@ -76,35 +64,26 @@ class GitHubTrendingSource:
                 repo_url = f"https://github.com/{repo_path}"
                 repo_name = repo_path.split("/")[-1] if "/" in repo_path else repo_path
 
-                # Description
                 desc_el = article.select_one("p")
                 description = desc_el.get_text(strip=True) if desc_el else ""
 
-                # Language
                 lang_el = article.select_one("[itemprop='programmingLanguage']")
                 language = lang_el.get_text(strip=True) if lang_el else "Unknown"
 
-                # Stars today
-                stars_today_el = article.select("span.d-inline-block")
                 stars_today = 0
-                for el in stars_today_el:
+                for el in article.select("span.d-inline-block"):
                     text = el.get_text(strip=True)
                     if "stars today" in text or "stars this week" in text:
-                        stars_str = text.split()[0].replace(",", "")
                         try:
-                            stars_today = int(stars_str)
+                            stars_today = int(text.split()[0].replace(",", ""))
                         except ValueError:
                             pass
 
-                # Total stars
                 total_stars = 0
-                star_links = article.select("a.Link--muted")
-                for link in star_links:
-                    href = link.get("href", "")
-                    if "/stargazers" in href:
-                        stars_text = link.get_text(strip=True).replace(",", "")
+                for link in article.select("a.Link--muted"):
+                    if "/stargazers" in link.get("href", ""):
                         try:
-                            total_stars = int(stars_text)
+                            total_stars = int(link.get_text(strip=True).replace(",", ""))
                         except ValueError:
                             pass
                         break

@@ -7,3 +7,6 @@ output/
 *.egg-info/
 dist/
 build/
+.idea/
+data/scan_count.json
+data/subscribers.db

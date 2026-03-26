@@ -1,16 +1,10 @@
-"""Thesis-driven LLM scoring engine.
-
-This is the core differentiator of vc-signal-scanner.
-It takes raw signals and evaluates them against a fund's investment thesis
-using Claude, returning structured relevance scores and reasoning.
-"""
+"""LLM-based scoring engine — evaluates signals against an investment thesis."""
 
 from __future__ import annotations
 
 import json
 import logging
 import asyncio
-from dataclasses import asdict
 
 import anthropic
 
@@ -18,7 +12,7 @@ from src.models import Signal, ScoredSignal, InvestmentThesis
 
 logger = logging.getLogger(__name__)
 
-SCORING_SYSTEM_PROMPT = """You are an experienced venture capital analyst. Your job is to evaluate startup signals against a specific investment thesis and determine their relevance.
+SCORING_SYSTEM_PROMPT = """You are an experienced venture capital analyst. Your job is to evaluate startup signals against a specific investment thesis and extract key company details.
 
 You will receive:
 1. An investment thesis describing a VC fund's focus
@@ -26,9 +20,15 @@ You will receive:
 
 You must respond with a JSON object containing:
 - "relevance_score": float from 0.0 to 10.0 (10 = perfect fit for the fund)
-- "reasoning": string explaining your assessment in 2-3 sentences
-- "thesis_alignment": list of strings describing which thesis criteria this matches
-- "red_flags": list of strings noting potential concerns
+- "reasoning": string explaining your score in 2-3 sentences — cover stage fit, geography fit, and why the traction is or isn't compelling
+- "thesis_alignment": list of strings, each naming a specific thesis criterion this signal meets
+- "red_flags": list of strings noting concrete concerns (e.g. "no revenue mentioned", "B2C model")
+- "risk": string, one sentence summarising the single biggest investment risk
+- "location": string, city and country if inferable from the signal, else empty string
+- "website": string, company website URL if mentioned or inferable, else empty string
+- "founders": list of strings, founder or key team member names if mentioned, else empty list
+- "previous_rounds": string, any prior funding mentioned (e.g. "Seed €1.2M, 2023"), else empty string
+- "stage": string, current funding stage (e.g. "Pre-Seed", "Seed", "Series A", "Series B", "Growth"), else empty string
 
 Scoring guidelines:
 - 8-10: Strong match — fits stage, geography, and sector. Clear traction signals.
@@ -48,13 +48,16 @@ class ThesisScorer:
         self,
         thesis: InvestmentThesis,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
-        max_concurrent: int = 5,
+        model: str = "claude-sonnet-4-6",
+        requests_per_minute: int = 4,
     ):
         self.thesis = thesis
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
-        self.semaphore = asyncio.Semaphore(max_concurrent)  # rate limiting
+        # Serialize requests and enforce minimum spacing to stay under RPM limit
+        self.semaphore = asyncio.Semaphore(1)
+        self._min_interval = 60.0 / requests_per_minute  # seconds between calls
+        self._last_call: float = 0.0
 
     async def score_signals(self, signals: list[Signal]) -> list[ScoredSignal]:
         """Score a batch of signals against the thesis."""
@@ -70,15 +73,20 @@ class ThesisScorer:
             elif isinstance(result, Exception):
                 logger.debug(f"Scoring failed: {result}")
 
-        # Sort by relevance score descending
         scored.sort(key=lambda s: s.relevance_score, reverse=True)
         logger.info(f"Scored {len(scored)} signals. Top score: {scored[0].relevance_score if scored else 'N/A'}")
         return scored
 
     async def _score_single(self, signal: Signal) -> ScoredSignal:
-        """Score a single signal using the LLM."""
+        """Score a single signal using the LLM, with rate limiting and retry."""
         async with self.semaphore:
-            signal_text = self._format_signal(signal)
+            # Enforce minimum interval between API calls
+            now = asyncio.get_event_loop().time()
+            gap = now - self._last_call
+            if gap < self._min_interval:
+                await asyncio.sleep(self._min_interval - gap)
+            self._last_call = asyncio.get_event_loop().time()
+
             thesis_text = self.thesis.to_prompt()
 
             user_prompt = f"""{thesis_text}
@@ -97,48 +105,58 @@ Additional info: {json.dumps(signal.extra) if signal.extra else 'None'}
 
 Evaluate this signal against the investment thesis above. Respond with JSON only."""
 
-            try:
-                # Using sync client in async context via executor
-                response = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.client.messages.create(
-                        model=self.model,
-                        max_tokens=500,
-                        system=SCORING_SYSTEM_PROMPT,
-                        messages=[{"role": "user", "content": user_prompt}],
-                    ),
-                )
+            for attempt in range(3):
+                try:
+                    response = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.client.messages.create(
+                            model=self.model,
+                            max_tokens=800,
+                            system=SCORING_SYSTEM_PROMPT,
+                            messages=[{"role": "user", "content": user_prompt}],
+                        ),
+                    )
 
-                response_text = response.content[0].text.strip()
+                    response_text = response.content[0].text.strip()
 
-                # Parse JSON response
-                # Handle potential markdown code blocks
-                if response_text.startswith("```"):
-                    response_text = response_text.split("\n", 1)[1]
-                    response_text = response_text.rsplit("```", 1)[0]
+                    if response_text.startswith("```"):
+                        response_text = response_text.split("\n", 1)[1]
+                        response_text = response_text.rsplit("```", 1)[0]
 
-                result = json.loads(response_text)
+                    result = json.loads(response_text)
 
-                return ScoredSignal(
-                    signal=signal,
-                    relevance_score=float(result.get("relevance_score", 0)),
-                    reasoning=result.get("reasoning", ""),
-                    thesis_alignment=result.get("thesis_alignment", []),
-                    red_flags=result.get("red_flags", []),
-                )
+                    return ScoredSignal(
+                        signal=signal,
+                        relevance_score=float(result.get("relevance_score", 0)),
+                        reasoning=result.get("reasoning", ""),
+                        thesis_alignment=result.get("thesis_alignment", []),
+                        red_flags=result.get("red_flags", []),
+                        risk=result.get("risk", ""),
+                        location=result.get("location", ""),
+                        website=result.get("website", ""),
+                        founders=result.get("founders", []),
+                        previous_rounds=result.get("previous_rounds", ""),
+                        stage=result.get("stage", ""),
+                    )
 
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse LLM response for '{signal.title}': {e}")
-                return ScoredSignal(
-                    signal=signal,
-                    relevance_score=0.0,
-                    reasoning="[Scoring error: could not parse LLM response]",
-                    thesis_alignment=[],
-                    red_flags=["scoring_error"],
-                )
-            except anthropic.APIError as e:
-                logger.warning(f"Anthropic API error for '{signal.title}': {e}")
-                raise
+                except anthropic.RateLimitError:
+                    wait = 15 * (2 ** attempt)
+                    logger.warning(f"Unexpected rate limit for '{signal.title}', waiting {wait}s (attempt {attempt+1}/3)")
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(wait)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse LLM response for '{signal.title}': {e}")
+                    return ScoredSignal(
+                        signal=signal,
+                        relevance_score=0.0,
+                        reasoning="[Scoring error: could not parse LLM response]",
+                        thesis_alignment=[],
+                        red_flags=["scoring_error"],
+                    )
+                except anthropic.APIError as e:
+                    logger.warning(f"Anthropic API error for '{signal.title}': {e}")
+                    raise
 
     def _format_signal(self, signal: Signal) -> str:
         """Format a signal for human-readable display."""
@@ -154,5 +172,5 @@ Evaluate this signal against the investment thesis above. Respond with JSON only
     def filter_relevant(
         self, scored_signals: list[ScoredSignal], threshold: float = 6.0
     ) -> list[ScoredSignal]:
-        """Filter scored signals to only include those above the relevance threshold."""
+        """Filter to signals above the relevance threshold."""
         return [s for s in scored_signals if s.relevance_score >= threshold]

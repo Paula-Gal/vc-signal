@@ -1,9 +1,4 @@
-"""Hacker News data source.
-
-Pulls top stories and Show HN posts from the HN API.
-Useful for catching new product launches, technical discussions,
-and startup announcements before they hit mainstream press.
-"""
+"""Hacker News data source — top stories and Show HN posts."""
 
 from __future__ import annotations
 
@@ -32,7 +27,6 @@ class HackerNewsSource:
         signals = []
         async with httpx.AsyncClient(timeout=30) as client:
             story_ids = await self._get_story_ids(client)
-            # Fetch stories concurrently in batches
             tasks = [self._fetch_story(client, sid) for sid in story_ids[: self.max_items]]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -59,8 +53,7 @@ class HackerNewsSource:
                 try:
                     resp = await client.get(category_endpoints[cat])
                     resp.raise_for_status()
-                    ids = resp.json()
-                    all_ids.extend(ids[:30])  # top 30 per category
+                    all_ids.extend(resp.json()[:30])  # top 30 per category
                 except httpx.HTTPError as e:
                     logger.warning(f"Failed to fetch {cat} stories: {e}")
         return list(dict.fromkeys(all_ids))  # dedupe preserving order
@@ -83,7 +76,6 @@ class HackerNewsSource:
             url = item.get("url", f"https://news.ycombinator.com/item?id={story_id}")
             hn_url = f"https://news.ycombinator.com/item?id={story_id}"
 
-            # Determine tags
             tags = []
             if title.startswith("Show HN:"):
                 tags.append("show-hn")

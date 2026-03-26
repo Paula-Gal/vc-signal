@@ -32,7 +32,11 @@ from rich.panel import Panel
 from src.models import InvestmentThesis, Signal
 from src.sources import HackerNewsSource, ProductHuntSource, GitHubTrendingSource, RSSFeedSource
 from src.scoring import ThesisScorer
-from src.output import MarkdownReportGenerator, EmailNotifier
+try:
+    from src.output import MarkdownReportGenerator, EmailNotifier
+    _output_available = True
+except ImportError:
+    _output_available = False
 
 load_dotenv()
 console = Console()
@@ -215,8 +219,8 @@ async def _run_pipeline(
     scorer = ThesisScorer(
         thesis=thesis,
         api_key=api_key,
-        model=scoring_config.get("model", "claude-sonnet-4-20250514"),
-        max_concurrent=scoring_config.get("max_concurrent_requests", 5),
+        model=scoring_config.get("model", "claude-sonnet-4-6"),
+        requests_per_minute=scoring_config.get("requests_per_minute", 4),
     )
 
     with console.status("[bold blue]Scoring signals with LLM..."):
@@ -228,47 +232,49 @@ async def _run_pipeline(
     print_summary_table(scored_signals, threshold)
 
     # 4. Generate markdown report
-    output_config = config.get("output", {}).get("markdown", {})
-    reporter = MarkdownReportGenerator(fund_name=thesis.fund_name)
-    report = reporter.generate(
-        scored_signals,
-        threshold=threshold,
-        max_items=output_config.get("max_items", 15),
-    )
+    if _output_available:
+        output_config = config.get("output", {}).get("markdown", {})
+        reporter = MarkdownReportGenerator(fund_name=thesis.fund_name)
+        report = reporter.generate(
+            scored_signals,
+            threshold=threshold,
+            max_items=output_config.get("max_items", 15),
+        )
 
-    # Determine output path
-    if not output_path:
-        output_dir = Path(output_config.get("output_dir", "output"))
-        output_dir.mkdir(exist_ok=True)
-        date_str = datetime.utcnow().strftime("%Y_%m_%d")
-        output_path = str(output_dir / f"digest_{date_str}.md")
+        if not output_path:
+            output_dir = Path(output_config.get("output_dir", "output"))
+            output_dir.mkdir(exist_ok=True)
+            date_str = datetime.utcnow().strftime("%Y_%m_%d")
+            output_path = str(output_dir / f"digest_{date_str}.md")
 
-    reporter.save(report, output_path)
-    console.print(f"\n[green]Report saved to {output_path}[/green]")
+        reporter.save(report, output_path)
+        console.print(f"\n[green]Report saved to {output_path}[/green]")
 
-    # 5. Email digest (optional)
-    if send_email:
-        missing = [v for v in ("EMAIL_SMTP_HOST", "EMAIL_USER", "EMAIL_PASSWORD", "EMAIL_FROM", "EMAIL_TO") if not os.getenv(v)]
-        if missing:
-            console.print(f"[red]Email not configured. Missing .env vars: {', '.join(missing)}[/red]")
-        else:
-            to_addrs = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
-            email_config = config.get("output", {}).get("email", {})
-            notifier = EmailNotifier(
-                smtp_host=os.getenv("EMAIL_SMTP_HOST"),
-                smtp_port=int(os.getenv("EMAIL_SMTP_PORT", "587")),
-                user=os.getenv("EMAIL_USER"),
-                password=os.getenv("EMAIL_PASSWORD"),
-                from_addr=os.getenv("EMAIL_FROM"),
-                to_addrs=to_addrs,
-                fund_name=thesis.fund_name,
-            )
-            notifier.send_digest(
-                scored_signals,
-                threshold=threshold,
-                max_items=email_config.get("max_items", 15),
-            )
-            console.print(f"[green]Email digest sent to {', '.join(to_addrs)}[/green]")
+        # 5. Email digest (optional)
+        if send_email:
+            missing = [v for v in ("EMAIL_SMTP_HOST", "EMAIL_USER", "EMAIL_PASSWORD", "EMAIL_FROM", "EMAIL_TO") if not os.getenv(v)]
+            if missing:
+                console.print(f"[red]Email not configured. Missing .env vars: {', '.join(missing)}[/red]")
+            else:
+                to_addrs = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+                email_config = config.get("output", {}).get("email", {})
+                notifier = EmailNotifier(
+                    smtp_host=os.getenv("EMAIL_SMTP_HOST"),
+                    smtp_port=int(os.getenv("EMAIL_SMTP_PORT", "587")),
+                    user=os.getenv("EMAIL_USER"),
+                    password=os.getenv("EMAIL_PASSWORD"),
+                    from_addr=os.getenv("EMAIL_FROM"),
+                    to_addrs=to_addrs,
+                    fund_name=thesis.fund_name,
+                )
+                notifier.send_digest(
+                    scored_signals,
+                    threshold=threshold,
+                    max_items=email_config.get("max_items", 15),
+                )
+                console.print(f"[green]Email digest sent to {', '.join(to_addrs)}[/green]")
+    else:
+        console.print("[dim]Output module not available — skipping report generation.[/dim]")
 
 
 if __name__ == "__main__":

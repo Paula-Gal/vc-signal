@@ -1,14 +1,8 @@
-"""Product Hunt data source.
-
-Monitors daily product launches on Product Hunt.
-Great for catching new B2B tools, developer products, and AI launches
-that may represent early-stage startups gaining traction.
-"""
+"""Product Hunt data source — daily product launches via GraphQL or RSS fallback."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 
 import httpx
 
@@ -23,15 +17,14 @@ class ProductHuntSource:
     def __init__(self, config: dict | None = None):
         self.config = config or {}
         self.min_votes = self.config.get("min_votes", 100)
-        self.api_token = self.config.get("api_token")  # PH developer token
+        self.api_token = self.config.get("api_token")
         self.max_items = self.config.get("max_items", 30)
 
     async def fetch(self) -> list[Signal]:
         """Fetch today's top Product Hunt launches."""
         if not self.api_token:
-            logger.info("ProductHunt: skipping (no API token configured). Set PH_API_TOKEN in .env")
+            logger.info("ProductHunt: no API token — falling back to RSS. Set PH_API_TOKEN in .env")
             return await self._fetch_via_rss()
-
         return await self._fetch_via_graphql()
 
     async def _fetch_via_graphql(self) -> list[Signal]:
@@ -41,25 +34,9 @@ class ProductHuntSource:
             posts(order: VOTES, first: %d) {
                 edges {
                     node {
-                        id
-                        name
-                        tagline
-                        description
-                        url
-                        website
-                        votesCount
-                        createdAt
-                        topics {
-                            edges {
-                                node {
-                                    name
-                                }
-                            }
-                        }
-                        makers {
-                            name
-                            username
-                        }
+                        id name tagline description url website votesCount createdAt
+                        topics { edges { node { name } } }
+                        makers { name username }
                     }
                 }
             }
@@ -80,17 +57,13 @@ class ProductHuntSource:
                 resp.raise_for_status()
                 data = resp.json()
 
-                posts = data.get("data", {}).get("posts", {}).get("edges", [])
-                for edge in posts:
+                for edge in data.get("data", {}).get("posts", {}).get("edges", []):
                     node = edge.get("node", {})
                     votes = node.get("votesCount", 0)
                     if votes < self.min_votes:
                         continue
 
-                    topics = [
-                        t["node"]["name"]
-                        for t in node.get("topics", {}).get("edges", [])
-                    ]
+                    topics = [t["node"]["name"] for t in node.get("topics", {}).get("edges", [])]
                     makers = [m.get("name", "") for m in node.get("makers", [])]
 
                     signals.append(
@@ -116,7 +89,7 @@ class ProductHuntSource:
         return signals
 
     async def _fetch_via_rss(self) -> list[Signal]:
-        """Fallback: scrape PH RSS feed when no API token is available."""
+        """Fallback: parse PH RSS feed when no API token is available."""
         import feedparser
 
         signals = []

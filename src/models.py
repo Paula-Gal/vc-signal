@@ -12,6 +12,8 @@ class SourceType(Enum):
     PRODUCT_HUNT = "producthunt"
     GITHUB = "github"
     RSS = "rss"
+    REDDIT = "reddit"
+    LAUNCHES = "launches"
 
 
 @dataclass
@@ -42,9 +44,17 @@ class ScoredSignal:
 
     signal: Signal
     relevance_score: float  # 0.0 to 10.0
-    reasoning: str  # LLM-generated explanation of why this is relevant
-    thesis_alignment: list[str]  # Which thesis criteria it matches
-    red_flags: list[str]  # Potential concerns
+    reasoning: str
+    thesis_alignment: list[str]
+    red_flags: list[str]
+
+    # Extracted startup details (best-effort from signal data)
+    location: str = ""
+    website: str = ""
+    founders: list[str] = field(default_factory=list)
+    previous_rounds: str = ""
+    stage: str = ""
+    risk: str = ""
 
     @property
     def is_relevant(self) -> bool:
