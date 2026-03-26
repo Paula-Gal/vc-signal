@@ -25,15 +25,14 @@ from src.scoring import ThesisScorer
 
 load_dotenv()
 
-# Check if we're in a serverless environment
-IS_SERVERLESS = os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+BASE_DIR = Path(__file__).resolve().parent
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
-PRELOADED_PATH = Path("data/preloaded.json")
-SCAN_COUNT_PATH = Path("data/scan_count.json") if not IS_SERVERLESS else Path("/tmp/scan_count.json")
+PRELOADED_PATH = BASE_DIR / "data" / "preloaded.json"
+SCAN_COUNT_PATH = Path("/tmp/scan_count.json")  # /tmp is writable on Vercel serverless
 MAX_DAILY_SCANS = 10
 
 EU_RSS_FEEDS = [
