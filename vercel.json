@@ -1,10 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "main.py": {
-      "runtime": "@vercel/python"
-    }
-  },
   "routes": [
     {
       "src": "/(.*)",
