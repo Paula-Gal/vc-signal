@@ -79,16 +79,20 @@ def _increment_scan_count() -> int:
 async def index(request: Request):
     scans_used = _get_scan_count()
     preloaded = _load_preloaded()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "signals": [],
-        "preloaded": preloaded.get("signals", []),
-        "total_scanned": 0,
-        "generated_at": "",
-        "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
-        "scans_remaining": max(0, MAX_DAILY_SCANS - scans_used),
-        "max_scans": MAX_DAILY_SCANS,
-    })
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "request": request,
+            "signals": [],
+            "preloaded": preloaded.get("signals", []),
+            "total_scanned": 0,
+            "generated_at": "",
+            "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
+            "scans_remaining": max(0, MAX_DAILY_SCANS - scans_used),
+            "max_scans": MAX_DAILY_SCANS,
+        },
+    )
 
 
 @app.get("/api/scan-status")

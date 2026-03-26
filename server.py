@@ -65,7 +65,11 @@ def _get_scan_count() -> int:
 def _increment_scan_count() -> int:
     count = _get_scan_count()
     new_count = count + 1
-    SCAN_COUNT_PATH.write_text(json.dumps({"date": str(date.today()), "count": new_count}))
+    try:
+        SCAN_COUNT_PATH.parent.mkdir(exist_ok=True)
+        SCAN_COUNT_PATH.write_text(json.dumps({"date": str(date.today()), "count": new_count}))
+    except (OSError, PermissionError):
+        pass
     return new_count
 
 
@@ -73,16 +77,20 @@ def _increment_scan_count() -> int:
 async def index(request: Request):
     scans_used = _get_scan_count()
     preloaded = _load_preloaded()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "signals": [],
-        "preloaded": preloaded.get("signals", []),
-        "total_scanned": 0,
-        "generated_at": "",
-        "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
-        "scans_remaining": max(0, MAX_DAILY_SCANS - scans_used),
-        "max_scans": MAX_DAILY_SCANS,
-    })
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "request": request,
+            "signals": [],
+            "preloaded": preloaded.get("signals", []),
+            "total_scanned": 0,
+            "generated_at": "",
+            "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
+            "scans_remaining": max(0, MAX_DAILY_SCANS - scans_used),
+            "max_scans": MAX_DAILY_SCANS,
+        },
+    )
 
 
 @app.get("/api/scan-status")
